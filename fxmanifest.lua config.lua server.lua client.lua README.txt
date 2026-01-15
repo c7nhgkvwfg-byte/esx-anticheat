@@ -1,1 +1,147 @@
+$root = "esx-anticheat"
+New-Item -ItemType Directory -Force -Path $root | Out-Null
 
+Set-Content "$root/fxmanifest.lua" @"
+fx_version 'cerulean'
+game 'gta5'
+lua54 'yes'
+
+author 'AntiCheat'
+description 'ESX AntiCheat Endgame'
+shared_script 'config.lua'
+client_script 'client.lua'
+server_script 'server.lua'
+"@
+
+Set-Content "$root/config.lua" @"
+Config = {}
+Config.KickScore = 120
+
+Config.ScoreValues = {
+    Godmode = 80,
+    DamageModifier = 70,
+    Teleport = 60,
+    SpeedHack = 40,
+    Executor = 100,
+    ResourceInjection = 100,
+    Honeypot = 100,
+    WeaponHack = 80,
+    EntitySpam = 50,
+    Tamper = 100,
+    Heartbeat = 100
+}
+
+Config.AdminGroups = {
+    ['superadmin'] = true,
+    ['admin'] = true
+}
+
+Config.Webhook = 'DISCORD_WEBHOOK_HIER'
+"@
+
+Set-Content "$root/server.lua" @"
+local ESX = exports['es_extended']:getSharedObject()
+
+local score = {}
+local lastCoords = {}
+local lastBeat = {}
+local bannedTokens = {}
+
+local function IsAdmin(src)
+    local xPlayer = ESX.GetPlayerFromId(src)
+    return xPlayer and Config.AdminGroups[xPlayer.getGroup()]
+end
+
+local function AddScore(src, reason)
+    if IsAdmin(src) then return end
+    score[src] = (score[src] or 0) + Config.ScoreValues[reason]
+    if score[src] >= Config.KickScore then
+        for _,t in pairs(GetPlayerTokens(src)) do bannedTokens[t] = true end
+        DropPlayer(src, 'AntiCheat: '..reason)
+    end
+end
+
+RegisterNetEvent('ac:heartbeat', function()
+    lastBeat[source] = os.time()
+end)
+
+CreateThread(function()
+    while true do
+        Wait(60000)
+        for _,src in pairs(GetPlayers()) do
+            if not lastBeat[src] or os.time() - lastBeat[src] > 90 then
+                AddScore(src, 'Heartbeat')
+            end
+        end
+    end
+end)
+
+AddEventHandler('gameEventTriggered', function(name, args)
+    if name == 'CEventNetworkEntityDamage' then
+        if args[5] and args[5] > 200 then
+            AddScore(args[2], 'DamageModifier')
+        end
+    end
+end)
+
+CreateThread(function()
+    while true do
+        Wait(2000)
+        for _,src in pairs(GetPlayers()) do
+            local ped = GetPlayerPed(src)
+            if ped ~= 0 then
+                local c = GetEntityCoords(ped)
+                if lastCoords[src] and #(c - lastCoords[src]) > 60 then
+                    AddScore(src, 'Teleport')
+                end
+                lastCoords[src] = c
+            end
+        end
+    end
+end)
+
+AddEventHandler('entityCreating', function(ent)
+    local o = NetworkGetEntityOwner(ent)
+    if o and o ~= 0 then
+        AddScore(o, 'EntitySpam')
+        CancelEvent()
+    end
+end)
+"@
+
+Set-Content "$root/client.lua" @"
+CreateThread(function()
+    while true do
+        Wait(math.random(25000,35000))
+        TriggerServerEvent('ac:heartbeat')
+    end
+end)
+
+CreateThread(function()
+    while true do
+        Wait(15000)
+        if GetEntityHealth(PlayerPedId()) > 200 then
+            TriggerServerEvent('ac:godmode')
+        end
+    end
+end)
+
+CreateThread(function()
+    while true do
+        Wait(8000)
+        if debug and debug.getinfo then
+            TriggerServerEvent('ac:executor','debug')
+        end
+    end
+end)
+"@
+
+Set-Content "$root/README.txt" @"
+ESX AntiCheat – Endgame
+- Client.lua obfuskieren
+- Webhook eintragen
+- Resource-Namen ändern
+"@
+
+Compress-Archive -Path $root -DestinationPath esx-anticheat.zip -Force
+Write-Host 'FERTIG: esx-anticheat.zip wurde erstellt'
